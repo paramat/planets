@@ -9,13 +9,10 @@ local np_terrain = {
 	persist = 0.5
 }
 
--- TODO reduce cloud noise to a 5x5x5 map since is quantised
--- will depend on chunksize = 80
-
 local np_cloud = {
 	offset = 0,
 	scale = 1,
-	spread = {x = 192, y = 192, z = 192},
+	spread = {x = 16, y = 16, z = 16},
 	seed = 2113,
 	octaves = 4,
 	persist = 1.0
@@ -43,27 +40,35 @@ local def = {}
 local spzstr = 64 * 64 -- space array z stride
 local spystr = 64 -- space array y stride
 
--- planet centres are at chunk minp
--- cenx/y/z is planet centre in chunk co-ords
--- rter = terrain radius / water level
--- ratm = atmosphere radius. var = planet variation
-local cenx = 32
-local ceny = 32
-local cenz = 32
-local rter = 256
-local ratm = 384
-local var = 1
--- planet id 1
-def[1] = {i = cenx, j = ceny, k = cenz, t = rter, a = ratm, v = var}
+-- cenx/y/z is planet centre
+-- radter = terrain radius / water level
+-- radatm = atmosphere radius
+-- plavar = planet variation
+local cenx = 0
+local ceny = 0
+local cenz = 0
+local radter = 256
+local radatm = 384
+local plavar = 1
 
-local rchu = math.ceil(ratm / 80) -- radius in chunks
+-- chunk co-ords of chunk containing planet centre 
+-- measured from space origin (-32, -32, -32 chunks)
+local cenxcc = math.floor((cenx + 32) / 80) + 32
+local cenycc = math.floor((ceny + 32) / 80) + 32
+local cenzcc = math.floor((cenz + 32) / 80) + 32
+local radatmc = math.ceil(radatm / 80) -- planet radius in chunks
 
--- TODO add scan loop to check for existing planets
+-- TODO add similar scan loop to check for existing planets
+-- do this once centre and atmosphere radius are known and
+-- before calculating other properties or creating def table entry
 
-for cz = cenz - rchu, cenz + rchu do
-for cy = ceny - rchu, ceny + rchu do
-	local spi = cz * spzstr + cy * spystr + cenx - rchu + 1
-	for cx = cenx - rchu, cenx + rchu do
+-- planet 1
+def[1] = {i = cenx, j = ceny, k = cenz, t = radter, a = radatm, v = plavar}
+
+for cz = cenzcc - radatmc, cenzcc + radatmc do
+for cy = cenycc - radatmc, cenycc + radatmc do
+	local spi = cz * spzstr + cy * spystr + cenxcc - radatmc + 1
+	for cx = cenxcc - radatmc, cenxcc + radatmc do
 		space[spi] = 1
 		spi = spi + 1
 	end
@@ -74,7 +79,7 @@ end
 -- Globalstep function
 
 local skybox_space = {
-	"planets_skybox_space_posy.png",
+	"planets_skybox_space.png",
 	"planets_skybox_space.png",
 	"planets_skybox_space.png",
 	"planets_skybox_space.png",
@@ -125,10 +130,11 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	local y1 = maxp.y
 	local z1 = maxp.z
 	
-	-- minp in chunk co-ords measured from space origin (-32, -32, -32 chunks)
-	local cx0 = math.floor(x0 / 80) + 32
-	local cy0 = math.floor(y0 / 80) + 32
-	local cz0 = math.floor(z0 / 80) + 32
+	-- chunk co-ords of chunk
+	-- measured from space origin (-32, -32, -32 chunks)
+	local cx0 = math.floor((x0 + 32) / 80) + 32
+	local cy0 = math.floor((y0 + 32) / 80) + 32
+	local cz0 = math.floor((z0 + 32) / 80) + 32
 	-- space table index
 	local spi = cz0 * spzstr + cy0 * spystr + cx0 + 1
 	-- planet def table index
@@ -148,17 +154,16 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	local data = vm:get_data()
 
 	if pdef then -- planet chunk
-		local chudims = x1 - x0 + 1 -- mapchunk dimensions
-		local pmapzstr = chudims * chudims -- perlinmap z stride, y stride
-		local pmapystr = chudims
-		local pmapdims = {x = chudims, y = chudims, z = chudims} -- perlinmap dimensions
+		local pmapdims = {x = 80, y = 80, z = 80} -- perlinmap dimensions
 		local pmapminp = {x = x0, y = y0, z = z0} -- perlinmap minp
+		local pmapdimsclo = {x = 5, y = 5, z = 5} -- cloud perlinmap dimensions
+		local pmapminpclo = {x = x0 / 16, y = y0 / 16, z = z0 / 16} -- cloud perlinmap minp
 
 		nobj_terrain = nobj_terrain or minetest.get_perlin_map(np_terrain, pmapdims)
-		nobj_cloud   = nobj_cloud   or minetest.get_perlin_map(np_cloud, pmapdims)
+		nobj_cloud   = nobj_cloud   or minetest.get_perlin_map(np_cloud, pmapdimsclo)
 
 		local nvals_terrain = nobj_terrain:get3dMap_flat(pmapminp, nbuf_terrain)
-		local nvals_cloud   = nobj_cloud:get3dMap_flat(pmapminp, nbuf_cloud)
+		local nvals_cloud   = nobj_cloud:get3dMap_flat(pmapminpclo, nbuf_cloud)
 
 		local tersca = (pdef.a - pdef.t) / 2 -- terrain scale
 
@@ -183,11 +188,11 @@ minetest.register_on_generated(function(minp, maxp, seed)
 				elseif nodrad <= pdef.t then -- water
 					data[vi] = c_water
 				elseif dengrad >= -1.0 and dengrad <= -0.95 then -- clouds
-					local xq = 16 * math.floor((x - x0) / 16) -- quantise position
-					local yq = 16 * math.floor((y - y0) / 16)
-					local zq = 16 * math.floor((z - z0) / 16)
-					local niq = zq * pmapzstr + yq * pmapystr + xq + 1
-					if nvals_cloud[niq] > 0 then
+					local xq = math.floor((x - x0) / 16) -- quantise position
+					local yq = math.floor((y - y0) / 16)
+					local zq = math.floor((z - z0) / 16)
+					local niq = zq * 25 + yq * 5 + xq + 1
+					if nvals_cloud[niq] > 0.5 then
 						data[vi] = c_cloud
 					end
 				elseif nodrad <= pdef.a then -- air
