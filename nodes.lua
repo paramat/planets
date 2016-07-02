@@ -5,6 +5,22 @@ minetest.register_node("planets:stone", {
 	sounds = default.node_sound_stone_defaults(),
 })
 
+minetest.register_node("planets:grass", {
+	description = "Grass",
+	tiles = {"default_grass.png"},
+	groups = {crumbly = 3, soil = 1},
+	sounds = default.node_sound_dirt_defaults({
+		footstep = {name = "default_grass_footstep", gain = 0.4},
+	}),
+})
+
+minetest.register_node("planets:sand", {
+	description = "Sand",
+	tiles = {"default_sand.png"},
+	groups = {crumbly = 3, sand = 1},
+	sounds = default.node_sound_sand_defaults(),
+})
+
 minetest.register_node("planets:cloud", {
 	description = "Cloud",
 	drawtype = "glasslike",

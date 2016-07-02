@@ -1,4 +1,4 @@
-planets 0.1.3 by paramat
+planets 0.1.4 by paramat
 For Minetest 0.4.13 and later
 Depends default
-Licenses: code WTFPL
+Licenses: Code LGPL 2.1. Media CC BY-SA 3.0

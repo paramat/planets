@@ -1,14 +1,14 @@
 -- Parameters
 
-local pnum = 1 -- number of planets desired
-local maxatt = 128 -- maximum number of attempts to add a planet
+local pnum = 64 -- number of planets desired
+local maxatt = 4096 -- maximum number of attempts to add a planet
 
 local np_terrain = {
 	offset = 0,
 	scale = 1.0,
-	spread = {x = 96, y = 96, z = 96},
+	spread = {x = 192, y = 192, z = 192},
 	seed = 921181,
-	octaves = 3,
+	octaves = 4,
 	persist = 0.5
 }
 
@@ -33,7 +33,7 @@ minetest.set_mapgen_params({mgname = "singlenode",
 	chunksize = 5, water_level = -31000, flags = "nolight"})
 
 
--- Create pseudorandom galaxy
+-- Create planetary system
 
 -- space is 64 ^ 3 chunks, centred on world centre
 -- space table is flat array of planet ids or nil (vacuum chunk)
@@ -44,16 +44,17 @@ local spzstr = 64 * 64 -- space array z stride
 local spystr = 64 -- space array y stride
 local plid = 0 -- planet id of last planet added, 0 = none
 local addatt = 0 -- number of attempts to add a planet
+math.randomseed(42) -- set pseudorandom seed
 
 while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 	-- create initial planet data to check for obstruction
 		-- cenx/y/z is planet centre
-		-- radter = terrain radius / water level
+		-- radter = terrain radius / beach top / water level + 4
 		-- radmax = atmosphere radius or max mountain radius
-	local cenx = 0
-	local ceny = 0
-	local cenz = 0
-	local radter = 256
+	local cenx = math.random(-2000, 2000)
+	local ceny = math.random(-2000, 2000)
+	local cenz = math.random(-2000, 2000)
+	local radter = 256 -- TODO randomise these
 	local radmax = 384
 
 	-- chunk co-ords of chunk containing planet centre 
@@ -65,7 +66,6 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 
 	-- check space is clear for planet
 	local clear = true -- is space clear
-	print ("[planets] Checking for obstruction")
 
 	for cz = cenzcc - radmaxc, cenzcc + radmaxc do
 		for cy = cenycc - radmaxc, cenycc + radmaxc do
@@ -73,7 +73,7 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 			for cx = cenxcc - radmaxc, cenxcc + radmaxc do
 				if space[spi] ~= nil then
 					clear = false
-					print ("[planets] Planet obstructed")
+					--print ("[planets] Planet obstructed")
 					break
 				end
 				spi = spi + 1
@@ -88,7 +88,7 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 	end
 
 	if clear then -- add planet
-		-- TODO generate extra planet data
+		-- TODO generate extra planet data here
 		plid = #def + 1 -- planet id
 		-- add planet data to def table
 		def[plid] = {i = cenx, j = ceny, k = cenz, t = radter, m = radmax}
@@ -107,6 +107,21 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 
 	addatt = addatt + 1
 end
+
+
+-- Spawn above planet 1
+
+local pdef = def[1]
+local spawn_pos = {x = pdef.i, y = pdef.j + pdef.m, z = pdef.k}
+
+minetest.register_on_newplayer(function(player)
+	player:setpos(spawn_pos)
+end)
+
+minetest.register_on_respawnplayer(function(player)
+	player:setpos(spawn_pos)
+	return true
+end)
 
 
 -- Globalstep function
@@ -175,19 +190,22 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	local defi = space[spi]
 	-- planet def
 	local pdef = def[defi]
-
-	local c_air = minetest.get_content_id("air")
-	local c_lava = minetest.get_content_id("planets:lava")
-	local c_stone = minetest.get_content_id("planets:stone")
-	local c_water = minetest.get_content_id("planets:water")
-	local c_cloud = minetest.get_content_id("planets:cloud")
-	local c_vacuum = minetest.get_content_id("planets:vacuum")
 	
+	local c_vacuum = minetest.get_content_id("planets:vacuum")
+
 	local vm, emin, emax = minetest.get_mapgen_object("voxelmanip")
 	local area = VoxelArea:new{MinEdge = emin, MaxEdge = emax}
 	local data = vm:get_data()
 
 	if pdef then -- planet chunk
+		local c_air = minetest.get_content_id("air")
+		local c_lava = minetest.get_content_id("planets:lava")
+		local c_stone = minetest.get_content_id("planets:stone")
+		local c_sand = minetest.get_content_id("planets:sand")
+		local c_grass = minetest.get_content_id("planets:grass")
+		local c_water = minetest.get_content_id("planets:water")
+		local c_cloud = minetest.get_content_id("planets:cloud")
+
 		local pmapdims = {x = 80, y = 80, z = 80} -- perlinmap dimensions
 		local pmapminp = {x = x0, y = y0, z = z0} -- perlinmap minp
 		local pmapdimsclo = {x = 5, y = 5, z = 5} -- cloud perlinmap dimensions
@@ -200,6 +218,7 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		local nvals_cloud   = nobj_cloud:get3dMap_flat(pmapminpclo, nbuf_cloud)
 
 		local tersca = (pdef.m - pdef.t) / 2 -- terrain scale
+		local stot = 3 / tersca -- stone noise threshold
 
 		local ni = 1 -- noise index
 		for z = z0, z1 do
@@ -217,9 +236,15 @@ minetest.register_on_generated(function(minp, maxp, seed)
 
 				if nodrad <= pdef.t / 2 then -- lava
 					data[vi] = c_lava
-				elseif density >= 0 then -- stone
+				elseif density >= stot then -- stone
 					data[vi] = c_stone
-				elseif nodrad <= pdef.t then -- water
+				elseif density >= 0 then -- fine materials
+					if nodrad <= pdef.t then
+						data[vi] = c_sand
+					else
+						data[vi] = c_grass
+					end
+				elseif nodrad <= pdef.t - 4 then -- water
 					data[vi] = c_water
 				elseif dengrad >= -1.0 and dengrad <= -0.95 then -- clouds
 					local xq = math.floor((x - x0) / 16) -- quantise position
@@ -255,7 +280,7 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	vm:set_data(data)
 	if pdef then
 		vm:calc_lighting()
-	else -- vacuum chunk, don't propagate shadow
+	else -- vacuum chunk, don't propagate shadow from above
 		vm:calc_lighting(nil, nil, false)
 	end
 	vm:write_to_map(data)
