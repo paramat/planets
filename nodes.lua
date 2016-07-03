@@ -32,7 +32,7 @@ minetest.register_node("planets:cloud", {
 	diggable = false,
 	buildable_to = true,
 	floodable = true,
-	post_effect_color = {a = 31, r = 241, g = 248, b = 255},
+	post_effect_color = {a = 47, r = 230, g = 235, b = 254},
 	groups = {not_in_creative_inventory = 1},
 })
 
