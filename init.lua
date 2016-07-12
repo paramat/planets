@@ -1,6 +1,6 @@
 -- Parameters
 
-local pnum = 64 -- number of planets desired
+local pnum = 512 -- number of planets desired
 local maxatt = 8192 -- maximum number of attempts to add a planet
 
 local np_terrain = {
@@ -50,10 +50,10 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 	-- create initial planet data to check for obstruction
 		-- cenx/y/z is planet centre
 		-- radmax = atmosphere radius or max mountain radius
-	local cenx = math.random(-4000, 4000)
-	local ceny = math.random(-4000, 4000)
-	local cenz = math.random(-4000, 4000)
-	local radmax = 384
+	local radmax = math.random(128, 512)
+	local cenx = math.random(-5000 + radmax, 5000 - radmax)
+	local ceny = math.random(-5000 + radmax, 5000 - radmax)
+	local cenz = math.random(-5000 + radmax, 5000 - radmax)
 
 	-- chunk co-ords of chunk containing planet centre 
 	-- measured from space origin (-64, -64, -64 chunks)
@@ -86,14 +86,14 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 	end
 
 	if clear then -- generate more data and add planet
-		local tersca = 64 -- terrain scale / cloud height
-		local radter = 256 -- average terrain level / density gradient zero
-		local radlav = 128 -- lava core radius
+		local tersca = math.random(16, 64) -- terrain scale / cloud height
+		-- average terrain level / density gradient zero
+		local radter = radmax - tersca * 2
+		local radlav = (radter - tersca * 2) / 2 -- lava core radius
 		local ocean = true -- liquid ocean
-		local radwat = 252 -- water level / 4 nodes below terrain squash
-							-- if oceans set to radter - 4
+		local radwat = radter - 2 -- water level 2 nodes below terrain squash
 		local atmos = true -- gaseous atmosphere to radmax
-		local clot = 0.5 -- cloud noise threshold
+		local clot = -2 + math.random() * 4 -- cloud noise threshold
 
 		plid = #def + 1 -- planet id
 		-- add planet data to def table
@@ -130,7 +130,7 @@ end
 -- Spawn above planet 1
 
 local pdef = def[1]
-local spawn_pos = {x = pdef.x, y = pdef.y + pdef.m, z = pdef.z}
+local spawn_pos = {x = pdef.x, y = pdef.y + pdef.m - 4, z = pdef.z}
 
 minetest.register_on_newplayer(function(player)
 	player:setpos(spawn_pos)
@@ -155,16 +155,30 @@ local skybox_space = {
 
 minetest.register_globalstep(function(dtime)
 	for _, player in ipairs(minetest.get_connected_players()) do
-		if math.random() < 0.05 then -- set gravity, skybox and override light
+		if math.random() < 0.03 then -- set gravity, skybox and override light
 			local ppos = player:getpos()
+			-- chunk co-ords of player
+			-- measured from space origin (-64, -64, -64 chunks)
+			local cpposx = math.floor((ppos.x + 32) / 80) + 64
+			local cpposy = math.floor((ppos.y + 32) / 80) + 64
+			local cpposz = math.floor((ppos.z + 32) / 80) + 64
+			-- space table index
+			local spi = cpposz * spzstr + cpposy * spystr + cpposx + 1
+			local defi = space[spi] -- planet def table index
+			local pdef = def[defi] -- planet def
+			local grav = 0 -- initialise to vacuum chunk
+			if pdef then -- planet chunk
+				grav = pdef.t / 384 -- gravity override
+			end
+
 			ppos.y = ppos.y + 1.5 -- node player head is in
 			local nodename = minetest.get_node(ppos).name
 			if nodename == "planets:vacuum" or nodename == "ignore" then -- space
-				--player:set_physics_override(1, 1, 1) -- speed, jump, gravity
+				player:set_physics_override(1, 1, 0) -- speed, jump, gravity
 				player:set_sky({r = 0, g = 0, b = 0, a = 0}, "skybox", skybox_space)
 				player:override_day_night_ratio(1)
-			else -- regular sky for now
-				--player:set_physics_override(1, 1, 1) -- speed, jump, gravity
+			else -- planet
+				player:set_physics_override(1, 1, grav) -- speed, jump, gravity
 				player:set_sky({}, "regular", {})
 				player:override_day_night_ratio(nil)
 			end
@@ -187,8 +201,11 @@ local nbuf_cloud
 
 -- On generated function
 
+local tree_path = minetest.get_modpath("default") .. "/schematics/apple_tree.mts"
+
 minetest.register_on_generated(function(minp, maxp, seed)
 	local t0 = os.clock()
+	local tree_pos = {} -- table of tree positions for schematic adding
 
 	local x0 = minp.x
 	local y0 = minp.y
@@ -220,6 +237,7 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		local c_lava = minetest.get_content_id("planets:lava")
 		local c_stone = minetest.get_content_id("planets:stone")
 		local c_sand = minetest.get_content_id("planets:sand")
+		local c_dirt = minetest.get_content_id("planets:dirt")
 		local c_grass = minetest.get_content_id("planets:grass")
 		local c_water = minetest.get_content_id("planets:water")
 		local c_cloud = minetest.get_content_id("planets:cloud")
@@ -235,8 +253,10 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		local nvals_terrain = nobj_terrain:get3dMap_flat(pmapminp, nbuf_terrain)
 		local nvals_cloud   = nobj_cloud:get3dMap_flat(pmapminpclo, nbuf_cloud)
 
-		-- auto set stone noise threshold for 3 nodes of fine material
-		local stot = 3 / pdef.s
+		-- auto set noise thresholds
+		local surt = 1 / pdef.s -- surface threshold for flora
+		local dirt = 1.5 / pdef.s -- dirt
+		local stot = 3 / pdef.s -- stone
 
 		local ni = 1 -- noise index
 		for z = z0, z1 do
@@ -246,10 +266,12 @@ minetest.register_on_generated(function(minp, maxp, seed)
 				local xcr = x - pdef.x -- x centre-relative
 				local ycr = y - pdef.y
 				local zcr = z - pdef.z
+				local top = ycr > math.abs(xcr) and ycr > math.abs(zcr) -- planet top
+
 				local nodrad = math.sqrt(xcr ^ 2 + ycr ^ 2 + zcr ^ 2) -- node radius
 				local dengrad = (pdef.t - nodrad) / pdef.s -- density gradient
 				local dennoise = nvals_terrain[ni] -- density noise
-				if pdef.o and nodrad <= pdef.w + 4 then -- if ocean squash terrain
+				if pdef.o and nodrad <= pdef.w + 2 then -- if ocean squash terrain
 					dennoise = dennoise / 2
 				end
 				local density = dennoise + dengrad -- density
@@ -259,10 +281,17 @@ minetest.register_on_generated(function(minp, maxp, seed)
 				elseif density >= stot then -- stone
 					data[vi] = c_stone
 				elseif density >= 0 then -- fine materials
-					if nodrad <= pdef.w + 4 then
+					if nodrad <= pdef.w + 2 then
 						data[vi] = c_sand
+					elseif density >= dirt then
+						data[vi] = c_dirt
 					else
 						data[vi] = c_grass
+						-- apple trees
+						if top and density <= surt and math.random() < 0.02 then
+							-- store pos to add schematic later
+							tree_pos[#tree_pos + 1] = {x = x - 2, y = y, z = z - 2}
+						end
 					end
 				elseif pdef.o and nodrad <= pdef.w then -- ocean
 					data[vi] = c_water
@@ -299,6 +328,13 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	end
 
 	vm:set_data(data)
+
+	-- place trees
+	for tree_id = 1, #tree_pos do
+		minetest.place_schematic_on_vmanip(vm,
+			tree_pos[tree_id], tree_path, "0", nil, false)
+	end
+
 	if pdef then
 		vm:calc_lighting()
 	else -- vacuum chunk, don't propagate shadow from above
