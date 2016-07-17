@@ -1,6 +1,6 @@
 -- Parameters
 
-local pnum = 512 -- number of planets desired
+local pnum = 1024 -- number of planets desired
 local maxatt = 8192 -- maximum number of attempts to add a planet
 
 local np_terrain = {
@@ -50,7 +50,7 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 	-- create initial planet data to check for obstruction
 		-- cenx/y/z is planet centre
 		-- radmax = atmosphere radius or max mountain radius
-	local radmax = math.random(128, 512)
+	local radmax = math.random(64, 512)
 	local cenx = math.random(-5000 + radmax, 5000 - radmax)
 	local ceny = math.random(-5000 + radmax, 5000 - radmax)
 	local cenz = math.random(-5000 + radmax, 5000 - radmax)
@@ -71,7 +71,6 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 			for cx = cenxcc - radmaxc, cenxcc + radmaxc do
 				if space[spi] ~= nil then
 					clear = false
-					--print ("[planets] Planet obstructed")
 					break
 				end
 				spi = spi + 1
@@ -98,17 +97,17 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 		plid = #def + 1 -- planet id
 		-- add planet data to def table
 		def[plid] = {
-			x = cenx,
-			y = ceny,
-			z = cenz,
-			m = radmax,
-			s = tersca,
-			t = radter,
-			l = radlav,
-			o = ocean,
-			w = radwat,
-			a = atmos,
-			c = clot,
+			cx = cenx,
+			cy = ceny,
+			cz = cenz,
+			rm = radmax,
+			ts = tersca,
+			rt = radter,
+			rl = radlav,
+			ob = ocean,
+			rw = radwat,
+			ab = atmos,
+			ct = clot,
 		}
 		print ("[planets] Adding planet " .. plid)
 
@@ -125,12 +124,13 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 
 	addatt = addatt + 1
 end
+print ("[planets] Add attempts " .. addatt)
 
 
 -- Spawn above planet 1
 
 local pdef = def[1]
-local spawn_pos = {x = pdef.x, y = pdef.y + pdef.m - 4, z = pdef.z}
+local spawn_pos = {x = pdef.cx, y = pdef.cy + pdef.rm - 2, z = pdef.cz}
 
 minetest.register_on_newplayer(function(player)
 	player:setpos(spawn_pos)
@@ -156,31 +156,38 @@ local skybox_space = {
 minetest.register_globalstep(function(dtime)
 	for _, player in ipairs(minetest.get_connected_players()) do
 		if math.random() < 0.03 then -- set gravity, skybox and override light
+			local pdef = nil
+			local in_radmax = false -- player within radmax of planet
 			local ppos = player:getpos()
 			-- chunk co-ords of player
 			-- measured from space origin (-64, -64, -64 chunks)
 			local cpposx = math.floor((ppos.x + 32) / 80) + 64
 			local cpposy = math.floor((ppos.y + 32) / 80) + 64
 			local cpposz = math.floor((ppos.z + 32) / 80) + 64
-			-- space table index
-			local spi = cpposz * spzstr + cpposy * spystr + cpposx + 1
-			local defi = space[spi] -- planet def table index
-			local pdef = def[defi] -- planet def
-			local grav = 0 -- initialise to vacuum chunk
-			if pdef then -- planet chunk
-				grav = pdef.t / 384 -- gravity override
+			if cpposx >= 0 and cpposx <= 127 and -- if inside space array
+					cpposy >= 0 and cpposy <= 127 and
+					cpposz >= 0 and cpposz <= 127 then
+				-- space table index
+				local spi = cpposz * spzstr + cpposy * spystr + cpposx + 1
+				local defi = space[spi] -- planet def table index
+				pdef = def[defi] -- planet def
+				if pdef then
+					in_radmax = (ppos.x - pdef.cx) ^ 2 +
+						(ppos.y - pdef.cy) ^ 2 +
+						(ppos.z - pdef.cz) ^ 2 <= pdef.rm ^ 2
+				end
 			end
 
-			ppos.y = ppos.y + 1.5 -- node player head is in
-			local nodename = minetest.get_node(ppos).name
-			if nodename == "planets:vacuum" or nodename == "ignore" then -- space
+			if pdef and in_radmax then
+				local grav = pdef.rt / 384 -- gravity override
+				local jump = 1 - (1 - grav) * 0.5 -- jump override
+				player:set_physics_override(1, jump, grav) -- speed, jump, gravity
+				player:set_sky({}, "regular", {})
+				player:override_day_night_ratio(nil)
+			else
 				player:set_physics_override(1, 1, 0) -- speed, jump, gravity
 				player:set_sky({r = 0, g = 0, b = 0, a = 0}, "skybox", skybox_space)
 				player:override_day_night_ratio(1)
-			else -- planet
-				player:set_physics_override(1, 1, grav) -- speed, jump, gravity
-				player:set_sky({}, "regular", {})
-				player:override_day_night_ratio(nil)
 			end
 		end
 	end
@@ -205,7 +212,6 @@ local tree_path = minetest.get_modpath("default") .. "/schematics/apple_tree.mts
 
 minetest.register_on_generated(function(minp, maxp, seed)
 	local t0 = os.clock()
-	local tree_pos = {} -- table of tree positions for schematic adding
 
 	local x0 = minp.x
 	local y0 = minp.y
@@ -214,19 +220,25 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	local y1 = maxp.y
 	local z1 = maxp.z
 	
+	local pdef = nil
 	-- chunk co-ords of chunk
 	-- measured from space origin (-64, -64, -64 chunks)
 	local cx0 = math.floor((x0 + 32) / 80) + 64
 	local cy0 = math.floor((y0 + 32) / 80) + 64
 	local cz0 = math.floor((z0 + 32) / 80) + 64
-	-- space table index
-	local spi = cz0 * spzstr + cy0 * spystr + cx0 + 1
-	-- planet def table index
-	local defi = space[spi]
-	-- planet def
-	local pdef = def[defi]
+	if cx0 >= 0 and cx0 <= 127 and
+			cy0 >= 0 and cy0 <= 127 and
+			cz0 >= 0 and cz0 <= 127 then -- inside space
+		-- space table index
+		local spi = cz0 * spzstr + cy0 * spystr + cx0 + 1
+		-- planet def table index
+		local defi = space[spi]
+		-- planet def
+		pdef = def[defi]
+	end
 	
 	local c_vacuum = minetest.get_content_id("planets:vacuum")
+	local tree_pos = {} -- table of tree positions for schematic adding
 
 	local vm, emin, emax = minetest.get_mapgen_object("voxelmanip")
 	local area = VoxelArea:new{MinEdge = emin, MaxEdge = emax}
@@ -254,34 +266,34 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		local nvals_cloud   = nobj_cloud:get3dMap_flat(pmapminpclo, nbuf_cloud)
 
 		-- auto set noise thresholds
-		local surt = 1 / pdef.s -- surface threshold for flora
-		local dirt = 1.5 / pdef.s -- dirt
-		local stot = 3 / pdef.s -- stone
+		local surt = 1 / pdef.ts -- surface threshold for flora
+		local dirt = 1.5 / pdef.ts -- dirt
+		local stot = 3 / pdef.ts -- stone
 
 		local ni = 1 -- noise index
 		for z = z0, z1 do
 		for y = y0, y1 do
 			local vi = area:index(x0, y, z) -- luavoxelmanip index
 			for x = x0, x1 do
-				local xcr = x - pdef.x -- x centre-relative
-				local ycr = y - pdef.y
-				local zcr = z - pdef.z
+				local xcr = x - pdef.cx -- x centre-relative
+				local ycr = y - pdef.cy
+				local zcr = z - pdef.cz
 				local top = ycr > math.abs(xcr) and ycr > math.abs(zcr) -- planet top
 
 				local nodrad = math.sqrt(xcr ^ 2 + ycr ^ 2 + zcr ^ 2) -- node radius
-				local dengrad = (pdef.t - nodrad) / pdef.s -- density gradient
+				local dengrad = (pdef.rt - nodrad) / pdef.ts -- density gradient
 				local dennoise = nvals_terrain[ni] -- density noise
-				if pdef.o and nodrad <= pdef.w + 2 then -- if ocean squash terrain
+				if pdef.ob and nodrad <= pdef.rw + 2 then -- if ocean squash terrain
 					dennoise = dennoise / 2
 				end
 				local density = dennoise + dengrad -- density
 
-				if nodrad <= pdef.l then -- magma
+				if nodrad <= pdef.rl then -- magma
 					data[vi] = c_lava
 				elseif density >= stot then -- stone
 					data[vi] = c_stone
 				elseif density >= 0 then -- fine materials
-					if nodrad <= pdef.w + 2 then
+					if nodrad <= pdef.rw + 2 then
 						data[vi] = c_sand
 					elseif density >= dirt then
 						data[vi] = c_dirt
@@ -293,18 +305,18 @@ minetest.register_on_generated(function(minp, maxp, seed)
 							tree_pos[#tree_pos + 1] = {x = x - 2, y = y, z = z - 2}
 						end
 					end
-				elseif pdef.o and nodrad <= pdef.w then -- ocean
+				elseif pdef.ob and nodrad <= pdef.rw then -- ocean
 					data[vi] = c_water
-				elseif pdef.a and pdef.c < 2 and
+				elseif pdef.ab and pdef.ct < 2 and
 						dengrad >= -1.0 and dengrad <= -0.95 then -- clouds
 					local xq = math.floor((x - x0) / 16) -- quantise position
 					local yq = math.floor((y - y0) / 16)
 					local zq = math.floor((z - z0) / 16)
 					local niq = zq * 25 + yq * 5 + xq + 1
-					if nvals_cloud[niq] > pdef.c then
+					if nvals_cloud[niq] > pdef.ct then
 						data[vi] = c_cloud
 					end
-				elseif pdef.a and nodrad <= pdef.m then -- air
+				elseif pdef.ab and nodrad <= pdef.rm then -- air
 					data[vi] = c_air
 				else -- vacuum
 					data[vi] = c_vacuum
