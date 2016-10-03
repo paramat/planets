@@ -1,3 +1,4 @@
+-- only for planets with flora and therefore coal
 minetest.register_node("planets:stone", {
 	description = "Stone",
 	tiles = {"default_stone.png"},

@@ -1,7 +1,7 @@
 -- Parameters
 
 local pnum = 1024 -- number of planets desired
-local maxatt = 8192 -- maximum number of attempts to add a planet
+local maxatt = 16384 -- maximum number of attempts to add a planet
 
 local np_terrain1 = {
 	offset = 0,
@@ -48,6 +48,7 @@ local np_cloud = {
 -- Do files
 
 dofile(minetest.get_modpath("planets") .. "/nodes.lua")
+dofile(minetest.get_modpath("planets") .. "/mapgen.lua")
 
 
 -- Content ids
@@ -88,7 +89,7 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 	-- create initial planet data to check for obstruction
 		-- cenx/y/z is planet centre
 		-- radmax = atmosphere radius or max mountain radius
-	local radmax = 640
+	local radmax = 640 -- fixed for now
 	local cenx = math.random(-5000 + radmax, 5000 - radmax)
 	local ceny = math.random(-5000 + radmax, 5000 - radmax)
 	local cenz = math.random(-5000 + radmax, 5000 - radmax)
@@ -125,7 +126,7 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 	if clear then -- generate more data
 		local tersca = 64 -- terrain scale / cloud height
 		local radter = radmax - tersca * 2 -- average terrain level / density grad zero
-		local radlav = (radter - tersca * 2) / 2 -- lava core radius
+		local radlav = (radter - tersca) / 2 -- lava core radius
 		local ocean = true -- liquid ocean
 		local radwat = radter - 2 -- water level 2 nodes below terrain squash
 		local atmos = true -- gaseous atmosphere to radmax
@@ -252,8 +253,6 @@ local nbuf_cloud
 
 -- On generated function
 
-local tree_path = minetest.get_modpath("default") .. "/schematics/apple_tree.mts"
-
 minetest.register_on_generated(function(minp, maxp, seed)
 	local t0 = os.clock()
 
@@ -280,8 +279,6 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		-- planet def
 		pdef = def[defi]
 	end
-	
-	local tree_pos = {} -- table of tree positions for schematic adding
 
 	local vm, emin, emax = minetest.get_mapgen_object("voxelmanip")
 	local area = VoxelArea:new{MinEdge = emin, MaxEdge = emax}
@@ -309,7 +306,6 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		local nvals_cloud = nobj_cloud:get3dMap_flat(pmapminpclo, nbuf_cloud)
 
 		-- auto set noise thresholds
-		local surt = 1 / pdef.ts -- surface threshold for flora
 		local dirt = 1.5 / pdef.ts -- dirt
 		local stot = 3 / pdef.ts -- stone
 
@@ -351,11 +347,6 @@ minetest.register_on_generated(function(minp, maxp, seed)
 						data[vi] = cids.dirt -- dirt
 					else
 						data[vi] = cids.grass -- grass
-						-- apple trees
-						if top and density <= surt and math.random() < 0.02 then
-							-- store pos to add schematic later
-							tree_pos[#tree_pos + 1] = {x = x - 2, y = y, z = z - 2}
-						end
 					end
 				elseif pdef.ob and nodrad <= pdef.rw then
 					data[vi] = cids.water -- water
@@ -392,13 +383,9 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	end
 
 	vm:set_data(data)
-
-	-- place trees
-	for tree_id = 1, #tree_pos do
-		minetest.place_schematic_on_vmanip(vm,
-			tree_pos[tree_id], tree_path, "0", nil, false)
-	end
-
+	-- place registered ores and decorations
+	minetest.generate_ores(vm)
+	minetest.generate_decorations(vm)
 	if pdef then
 		vm:calc_lighting()
 	else -- vacuum mapchunk, don't propagate shadow from above
