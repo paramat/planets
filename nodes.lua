@@ -6,6 +6,13 @@ minetest.register_node("planets:stone", {
 	sounds = default.node_sound_stone_defaults(),
 })
 
+minetest.register_node("planets:moon_stone", {
+	description = "Moon Stone",
+	tiles = {"default_stone.png"},
+	groups = {cracky = 3, stone = 1},
+	sounds = default.node_sound_stone_defaults(),
+})
+
 minetest.register_node("planets:dirt", {
 	description = "Dirt",
 	tiles = {"default_dirt.png"},

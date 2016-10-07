@@ -1,5 +1,6 @@
 -- Parameters
 
+local prseed = 42 -- pseudorandom seed for planetary system
 local pnum = 1024 -- number of planets desired
 local maxatt = 16384 -- maximum number of attempts to add a planet
 
@@ -15,7 +16,7 @@ local np_terrain1 = {
 
 local np_terrain2 = {
 	offset = 0,
-	scale = 0.5,
+	scale = 1.0,
 	spread = {x = 192, y = 192, z = 192},
 	seed = 30091,
 	octaves = 4,
@@ -58,9 +59,11 @@ local cids = {
 	vacuum = minetest.get_content_id("planets:vacuum"),
 	lava = minetest.get_content_id("planets:lava"),
 	stone = minetest.get_content_id("planets:stone"),
+	moonstone = minetest.get_content_id("planets:moon_stone"),
 	sand = minetest.get_content_id("planets:sand"),
 	dirt = minetest.get_content_id("planets:dirt"),
 	grass = minetest.get_content_id("planets:grass"),
+	regolith = minetest.get_content_id("planets:regolith"),
 	water = minetest.get_content_id("planets:water"),
 	cloud = minetest.get_content_id("planets:cloud"),
 }
@@ -84,12 +87,15 @@ local spystr = 128 -- space array y stride
 local plid = 0 -- planet id of last planet added, 0 = none
 local addatt = 0 -- number of attempts to add a planet
 
-math.randomseed(42) -- set pseudorandom seed
+math.randomseed(prseed) -- set pseudorandom seed
 while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 	-- create initial planet data to check for obstruction
 		-- cenx/y/z is planet centre
 		-- radmax = atmosphere radius or max mountain radius
-	local radmax = 640 -- fixed for now
+	local radmax = math.random(128, 640)
+	if plid == 0 then
+		radmax = 640 -- first planet large and earthlike
+	end
 	local cenx = math.random(-5000 + radmax, 5000 - radmax)
 	local ceny = math.random(-5000 + radmax, 5000 - radmax)
 	local cenz = math.random(-5000 + radmax, 5000 - radmax)
@@ -124,14 +130,24 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 	end
 
 	if clear then -- generate more data
-		local tersca = 64 -- terrain scale / cloud height
-		local radter = radmax - tersca * 2 -- average terrain level / density grad zero
-		local radlav = (radter - tersca) / 2 -- lava core radius
-		local ocean = true -- liquid ocean
+		local atmos = radmax >= 384 -- gaseous atmosphere to radmax
+		local tersca = math.random(16, 64) * radmax / 640 -- terrain scale
+		local radter = radmax - 128 -- average terrain level / density grad zero
+		if not atmos then
+			radter = radmax - tersca * 2
+		end
+		local radlav = (radter - tersca * 2) / 2 -- lava core radius
+		local nodtyp = 0 -- node type. 0 = earthlike
+		if not atmos then
+			nodtyp = 1 -- grey moon
+		end
+		local ocean = atmos -- liquid ocean
 		local radwat = radter - 2 -- water level 2 nodes below terrain squash
-		local atmos = true -- gaseous atmosphere to radmax
 		local clothr = -1 + math.random() * 2 -- cloud noise threshold
 		local ternoi = math.random(1, 2) -- terrain noise
+		if plid == 0 then
+			ternoi = 1 -- first planet rough
+		end
 
 		plid = #def + 1 -- planet id
 		-- add planet data to def table
@@ -148,6 +164,7 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 			ab = atmos,
 			ct = clothr,
 			tn = ternoi,
+			nt = nodtyp,
 		}
 		print ("[planets] Adding planet " .. plid)
 
@@ -186,7 +203,7 @@ end)
 -- Globalstep function
 
 local skybox_space = {
-	"planets_skybox_space.png",
+	"planets_skybox_posy.png",
 	"planets_skybox_space.png",
 	"planets_skybox_space.png",
 	"planets_skybox_space.png",
@@ -219,14 +236,18 @@ minetest.register_globalstep(function(dtime)
 				end
 			end
 
-			if pdef and in_radmax then
-				local grav = pdef.rt / 512 -- gravity override
-				local jump = 1 - (1 - grav) * 0.5 -- jump override
+			if pdef and in_radmax then -- in planet gravity well
+				local grav = pdef.rt / 512
+				local jump = 1 - (1 - grav) * 0.5
 				player:set_physics_override(1, jump, grav) -- speed, jump, gravity
+			else
+				player:set_physics_override(1, 1, 0) -- speed, jump, gravity
+			end
+
+			if pdef and pdef.ab and in_radmax then -- in atmosphere
 				player:set_sky({}, "regular", {})
 				player:override_day_night_ratio(nil)
 			else
-				player:set_physics_override(1, 1, 0) -- speed, jump, gravity
 				player:set_sky({r = 0, g = 0, b = 0, a = 0}, "skybox", skybox_space)
 				player:override_day_night_ratio(1)
 			end
@@ -308,6 +329,7 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		-- auto set noise thresholds
 		local dirt = 1.5 / pdef.ts -- dirt
 		local stot = 3 / pdef.ts -- stone
+		local clot = -64 / pdef.ts -- clouds at 64 nodes
 
 		local ni = 1 -- noise index
 		for z = z0, z1 do
@@ -330,39 +352,53 @@ minetest.register_on_generated(function(minp, maxp, seed)
 				local n_fissure = math.abs(nvals_fissure[ni])
 				local is_fissure = n_fissure < 0.04
 
-				if nodrad <= pdef.rl then
-					data[vi] = cids.lava -- magma
-				elseif density >= stot then -- below stone level
-					if is_fissure then
-						data[vi] = cids.air -- fissure air
+				if pdef.nt == 0 then -- earthlike
+					if nodrad <= pdef.rl then
+						data[vi] = cids.lava -- magma
+					elseif density >= stot then -- below stone level
+						if is_fissure then
+							data[vi] = cids.air -- fissure air
+						else
+							data[vi] = cids.stone -- stone
+						end
+					elseif density >= 0 then -- below terrain level
+						if nodrad <= pdef.rw + 2 then
+							data[vi] = cids.sand -- sand
+						elseif is_fissure then
+							data[vi] = cids.air -- fissure air
+						elseif density >= dirt then
+							data[vi] = cids.dirt -- dirt
+						else
+							data[vi] = cids.grass -- grass
+						end
+					elseif pdef.ob and nodrad <= pdef.rw then
+						data[vi] = cids.water -- water
+					elseif pdef.ab and
+							dengrad >= clot and dengrad <= clot * 0.95 then
+						local xq = math.floor((x - x0) / 16) -- quantise position
+						local yq = math.floor((y - y0) / 16)
+						local zq = math.floor((z - z0) / 16)
+						local niq = zq * 25 + yq * 5 + xq + 1
+						if nvals_cloud[niq] > pdef.ct then
+							data[vi] = cids.cloud -- cloud
+						end
+					elseif pdef.ab and nodrad <= pdef.rm then
+						data[vi] = cids.air -- air
 					else
-						data[vi] = cids.stone -- stone
+						data[vi] = cids.vacuum -- vacuum
 					end
-				elseif density >= 0 then -- below terrain level
-					if nodrad <= pdef.rw + 2 then
-						data[vi] = cids.sand -- sand
+				elseif pdef.nt == 1 then -- grey moon
+					if nodrad <= pdef.rl then
+						data[vi] = cids.lava -- magma
 					elseif is_fissure then
-						data[vi] = cids.air -- fissure air
-					elseif density >= dirt then
-						data[vi] = cids.dirt -- dirt
+						data[vi] = cids.vacuum -- fissure vacuum
+					elseif density >= dirt then -- below stone level
+						data[vi] = cids.moonstone -- stone
+					elseif density >= 0 then -- below terrain level
+						data[vi] = cids.regolith -- regolith
 					else
-						data[vi] = cids.grass -- grass
+						data[vi] = cids.vacuum -- vacuum
 					end
-				elseif pdef.ob and nodrad <= pdef.rw then
-					data[vi] = cids.water -- water
-				elseif pdef.ab and pdef.ct < 2 and
-						dengrad >= -1.0 and dengrad <= -0.95 then
-					local xq = math.floor((x - x0) / 16) -- quantise position
-					local yq = math.floor((y - y0) / 16)
-					local zq = math.floor((z - z0) / 16)
-					local niq = zq * 25 + yq * 5 + xq + 1
-					if nvals_cloud[niq] > pdef.ct then
-						data[vi] = cids.cloud -- cloud
-					end
-				elseif pdef.ab and nodrad <= pdef.rm then
-					data[vi] = cids.air -- air
-				else
-					data[vi] = cids.vacuum -- vacuum
 				end
 
 				ni = ni + 1
