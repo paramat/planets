@@ -160,25 +160,6 @@ minetest.register_decoration({
 	flags = "place_center_x, place_center_z",
 })
 
--- Junglegrass
-
-minetest.register_decoration({
-	deco_type = "simple",
-	place_on = {"planets:grass"},
-		sidelen = 16,
-		noise_params = {
-			offset = 0,
-			scale = 0.06,
-			spread = {x = 200, y = 200, z = 200},
-			seed = 801,
-			octaves = 3,
-			persist = 0.6
-		},
-		y_min = -31000,
-		y_max = 31000,
-	decoration = "default:junglegrass",
-})
-
 -- Flowers
 
 local function register_flower(seed, name)

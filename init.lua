@@ -131,10 +131,10 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 
 	if clear then -- generate more data
 		local atmos = radmax >= 384 -- gaseous atmosphere to radmax
-		local tersca = math.random(16, 64) * radmax / 640 -- terrain scale
+		local tersca = radmax * 0.1 -- terrain scale
 		local radter = radmax - 128 -- average terrain level / density grad zero
 		if not atmos then
-			radter = radmax - tersca * 2
+			radter = radmax * 0.8
 		end
 		local radlav = (radter - tersca * 2) / 2 -- lava core radius
 		local nodtyp = 0 -- node type. 0 = earthlike
@@ -143,11 +143,8 @@ while plid < pnum and addatt <= maxatt do -- avoid infinite attempts
 		end
 		local ocean = atmos -- liquid ocean
 		local radwat = radter - 2 -- water level 2 nodes below terrain squash
-		local clothr = -1 + math.random() * 2 -- cloud noise threshold
+		local clothr = -0.5 + math.random() -- cloud noise threshold
 		local ternoi = math.random(1, 2) -- terrain noise
-		if plid == 0 then
-			ternoi = 1 -- first planet rough
-		end
 
 		plid = #def + 1 -- planet id
 		-- add planet data to def table
@@ -237,9 +234,8 @@ minetest.register_globalstep(function(dtime)
 			end
 
 			if pdef and in_radmax then -- in planet gravity well
-				local grav = pdef.rt / 512
-				local jump = 1 - (1 - grav) * 0.5
-				player:set_physics_override(1, jump, grav) -- speed, jump, gravity
+				local grav = math.min(pdef.rt / 512, 1)
+				player:set_physics_override(1, 1, grav) -- speed, jump, gravity
 			else
 				player:set_physics_override(1, 1, 0) -- speed, jump, gravity
 			end
